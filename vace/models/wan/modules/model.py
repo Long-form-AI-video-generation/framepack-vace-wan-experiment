@@ -30,7 +30,8 @@ class VaceWanAttentionBlock(WanAttentionBlock):
         nn.init.zeros_(self.after_proj.weight)
         nn.init.zeros_(self.after_proj.bias)
 
-    def forward(self, c, x, **kwargs):
+    def forward(self, c, x, frame_offset=0 , **kwargs):
+        kwargs['frame_offset'] = frame_offset
         if self.block_id == 0:
             c = self.before_proj(c) + x
             all_c = []
@@ -60,7 +61,8 @@ class BaseWanAttentionBlock(WanAttentionBlock):
         super().__init__(cross_attn_type, dim, ffn_dim, num_heads, window_size, qk_norm, cross_attn_norm, eps)
         self.block_id = block_id
 
-    def forward(self, x, hints, context_scale=1.0, **kwargs):
+    def forward(self, x, hints, context_scale=1.0,frame_offset=0, **kwargs):
+        kwargs['frame_offset'] = frame_offset
         x = super().forward(x, **kwargs)
         if self.block_id is not None:
             x = x + hints[self.block_id] * context_scale
@@ -122,6 +124,7 @@ class VaceWanModel(WanModel):
         x,
         vace_context,
         seq_len,
+        frame_offset,
         kwargs
     ):
         # embeddings
@@ -150,6 +153,8 @@ class VaceWanModel(WanModel):
         seq_len,
         vace_context_scale=1.0,
         clip_fea=None,
+        frame_offset=0,
+        sectionId=0,
         y=None,
     ):
         r"""
@@ -176,6 +181,8 @@ class VaceWanModel(WanModel):
         # if self.model_type == 'i2v':
         #     assert clip_fea is not None and y is not None
         # params
+        self.section_embedding = nn.Embedding(20, self.dim)
+      
         device = self.patch_embedding.weight.device
         if self.freqs.device != device:
             self.freqs = self.freqs.to(device)
@@ -210,7 +217,9 @@ class VaceWanModel(WanModel):
                     [u, u.new_zeros(self.text_len - u.size(0), u.size(1))])
                 for u in context
             ]))
-
+       
+            
+        #     vace_context = [z_i + section_embed for z_i in vace_context]
         # if clip_fea is not None:
         #     context_clip = self.img_emb(clip_fea)  # bs x 257 x dim
         #     context = torch.concat([context_clip, context], dim=1)
@@ -222,9 +231,11 @@ class VaceWanModel(WanModel):
             grid_sizes=grid_sizes,
             freqs=self.freqs,
             context=context,
-            context_lens=context_lens)
-
-        hints = self.forward_vace(x, vace_context, seq_len, kwargs)
+            context_lens=context_lens,
+            frame_offset=frame_offset
+            )
+        print('context',vace_context_scale)
+        hints = self.forward_vace(x, vace_context, seq_len,frame_offset, kwargs)
         kwargs['hints'] = hints
         kwargs['context_scale'] = vace_context_scale
 

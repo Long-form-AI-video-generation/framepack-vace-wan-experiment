@@ -242,21 +242,25 @@ class WanVace(WanT2V):
                         src_ref_images[i][j] = ref_img.to(device)
         return src_video, src_mask, src_ref_images
 
+    # def decode_latent(self, zs, ref_images=None, vae=None):
+    #     vae = self.vae if vae is None else vae
+    #     if ref_images is None:
+    #         ref_images = [None] * len(zs)
+    #     else:
+    #         assert len(zs) == len(ref_images)
+
+    #     trimed_zs = []
+    #     for z, refs in zip(zs, ref_images):
+    #         if refs is not None:
+    #             z = z[:, len(refs):, :, :]
+    #         trimed_zs.append(z)
+
+    #     return vae.decode(trimed_zs)
     def decode_latent(self, zs, ref_images=None, vae=None):
         vae = self.vae if vae is None else vae
-        if ref_images is None:
-            ref_images = [None] * len(zs)
-        else:
-            assert len(zs) == len(ref_images)
 
-        trimed_zs = []
-        for z, refs in zip(zs, ref_images):
-            if refs is not None:
-                z = z[:, len(refs):, :, :]
-            trimed_zs.append(z)
-
-        return vae.decode(trimed_zs)
-
+    # No need to check ref_images length or trim anymore
+        return vae.decode(zs)
 
 
     def generate(self,
@@ -316,6 +320,7 @@ class WanVace(WanT2V):
         # seq_len = math.ceil((target_shape[2] * target_shape[3]) /
         #                     (self.patch_size[1] * self.patch_size[2]) *
         #                     target_shape[1] / self.sp_size) * self.sp_size
+        
 
         if n_prompt == "":
             n_prompt = self.sample_neg_prompt
@@ -431,8 +436,446 @@ class WanVace(WanT2V):
             dist.barrier()
 
         return videos[0] if self.rank == 0 else None
+    
+    def generate_with_framepack(self,
+                 input_prompt,
+                 input_frames,
+                 input_masks,
+                 input_ref_images,
+                 size=(1280, 720),
+                 frame_num=240,
+                 context_scale=1.0,
+                 shift=5.0,
+                 sample_solver='unipc',
+                 sampling_steps=1,
+                 guide_scale=5.0,
+                 n_prompt="",
+                 seed=-1,
+                 offload_model=True):
+        r"""
+        Generates video frames from text prompt using diffusion process.
+
+        Args:
+            input_prompt (`str`):
+                Text prompt for content generation
+            size (tupele[`int`], *optional*, defaults to (1280,720)):
+                Controls video resolution, (width,height).
+            frame_num (`int`, *optional*, defaults to 81):
+                How many frames to sample from a video. The number should be 4n+1
+            shift (`float`, *optional*, defaults to 5.0):
+                Noise schedule shift parameter. Affects temporal dynamics
+            sample_solver (`str`, *optional*, defaults to 'unipc'):
+                Solver used to sample the video.
+            sampling_steps (`int`, *optional*, defaults to 40):
+                Number of diffusion sampling steps. Higher values improve quality but slow generation
+            guide_scale (`float`, *optional*, defaults 5.0):
+                Classifier-free guidance scale. Controls prompt adherence vs. creativity
+            n_prompt (`str`, *optional*, defaults to ""):
+                Negative prompt for content exclusion. If not given, use `config.sample_neg_prompt`
+            seed (`int`, *optional*, defaults to -1):
+                Random seed for noise generation. If -1, use random seed.
+            offload_model (`bool`, *optional*, defaults to True):
+                If True, offloads models to CPU during generation to save VRAM
+
+        Returns:
+            torch.Tensor:
+                Generated video frames tensor. Dimensions: (C, N H, W) where:
+                - C: Color channels (3 for RGB)
+                - N: Number of frames (81)
+                - H: Frame height (from size)
+                - W: Frame width from size)
+        """
+        # preprocess
+        # F = frame_num
+        # target_shape = (self.vae.model.z_dim, (F - 1) // self.vae_stride[0] + 1,
+        #                 size[1] // self.vae_stride[1],
+        #                 size[0] // self.vae_stride[2])
+        #
+        # seq_len = math.ceil((target_shape[2] * target_shape[3]) /
+        #                     (self.patch_size[1] * self.patch_size[2]) *
+        #                     target_shape[1] / self.sp_size) * self.sp_size
+        section_window=41
+        frame_num=121
+        section_num= math.ceil(frame_num/section_window)
+        history_latent=[]
+        generated_latent=[]
+        frame_list=None
+        mask_list=None
+        print('total frames', frame_num)
+        print('total sections', section_num)
+        if n_prompt == "":
+            n_prompt = self.sample_neg_prompt
+        # seed = seed if seed >= 0 else random.randint(0, sys.maxsize)
+        # seed_g = torch.Generator(device=self.device)
+        # seed_g.manual_seed(seed)
+        if seed == -1:
+        # Use current time for true randomness across runs
+            import time
+            base_seed = int(time.time() * 1000) % (1 << 32)
+        else:
+            base_seed = seed
+        
+        for section_id in range(section_num):
+            print(f"\n🔷🔷🔷 [SECTION START] — Processing Section {section_id+1} / {section_num}🔷🔷🔷\n ")
+            section_seed = base_seed + section_id * 12345  # Large prime for good distribution
+        
+            # Create fresh generator for each section
+            section_generator = torch.Generator(device=self.device)
+            section_generator.manual_seed(section_seed)
+            if frame_list is None or mask_list is None:
+                # vace context encode
+                frame_offset =0
+                context_scale=1.0
+                z0 = self.vace_encode_frames(input_frames, input_ref_images, masks=input_masks)
+                print('zo shape', z0[0].shape)
+                m0 = self.vace_encode_masks(input_masks, input_ref_images)
+                z = self.vace_latent(z0, m0)
+                target_shape = list(z0[0].shape)
+                target_shape[0] = int(target_shape[0] / 2)
+                noise = [
+                torch.randn(
+                    target_shape[0],
+                    target_shape[1],
+                    target_shape[2],
+                    target_shape[3],
+                    dtype=torch.float32,
+                    device=self.device,
+                    generator=section_generator)
+            ]
+                
+            else:
+                
+                print('here with context frames')
+                context_variation = torch.rand(1).item() * 0.6 + 0.5
+                context_scale = context_scale * context_variation
+                frame_offset=22 + (section_id - 1) * 14 if section_id > 0 else 0
+                guide_scale = 5.0 + (torch.rand(1).item() - 0.5) * 0.8
+                ref_image=None
+                # Now encode
+                z0 = self.vace_encode_frames(frame_list, ref_image, masks=mask_list)
+                m0 = self.vace_encode_masks(mask_list, ref_image)
+                z = self.vace_latent(z0, m0)
+                noise_seed = seed + section_id * 1000  # Different seed per section
+                # seed_g = torch.Generator(device=self.device)
+                # seed_g.manual_seed(noise_seed)
+                target_shape = list(z0[0].shape)
+                target_shape[0] = int(target_shape[0] / 2)
+                noise = [
+                    torch.randn(
+                        target_shape[0],
+                        target_shape[1],
+                        target_shape[2],
+                        target_shape[3],
+                        dtype=torch.float32,
+                        device=self.device,
+                        generator=section_generator)
+                ]
+                
+                            
+            if not self.t5_cpu:
+                self.text_encoder.model.to(self.device)
+                context = self.text_encoder([input_prompt], self.device)
+                context_null = self.text_encoder([n_prompt], self.device)
+                if offload_model:
+                    self.text_encoder.model.cpu()
+            else:
+                context = self.text_encoder([input_prompt], torch.device('cpu'))
+                context_null = self.text_encoder([n_prompt], torch.device('cpu'))
+                context = [t.to(self.device) for t in context]
+                context_null = [t.to(self.device) for t in context_null]
+            
+            
+            seq_len = math.ceil((target_shape[2] * target_shape[3]) /
+                                (self.patch_size[1] * self.patch_size[2]) *
+                                target_shape[1] / self.sp_size) * self.sp_size
+
+            @contextmanager
+            def noop_no_sync():
+                yield
+
+            no_sync = getattr(self.model, 'no_sync', noop_no_sync)
+            sample_solver='dpm++'
+            sampling_steps=20
+            # evaluation mode
+            with amp.autocast(dtype=self.param_dtype), torch.no_grad(), no_sync():
+
+                if sample_solver == 'unipc':
+                    sample_scheduler = FlowUniPCMultistepScheduler(
+                        num_train_timesteps=self.num_train_timesteps,
+                        shift=1,
+                        use_dynamic_shifting=False)
+                    sample_scheduler.set_timesteps(
+                        sampling_steps, device=self.device, shift=shift)
+                    timesteps = sample_scheduler.timesteps
+                elif sample_solver == 'dpm++':
+                    sample_scheduler = FlowDPMSolverMultistepScheduler(
+                        num_train_timesteps=self.num_train_timesteps,
+                        shift=1,
+                        use_dynamic_shifting=False)
+                    sampling_sigmas = get_sampling_sigmas(sampling_steps, shift)
+                    timesteps, _ = retrieve_timesteps(
+                        sample_scheduler,
+                        device=self.device,
+                        sigmas=sampling_sigmas)
+                else:
+                    raise NotImplementedError("Unsupported solver.")
+
+                # sample videos
+                latents = noise
+                for i, tensor in enumerate(noise):
+                    print(f"\n🔷🔷🔷 noise shape🔷🔷🔷\n",  {tensor.shape} )
+                    print(f"\n🔷🔷🔷 context shape🔷🔷🔷\n",  {z[0].shape} )
+                arg_c = {'context': context, 'seq_len': seq_len,  'frame_offset': frame_offset, 'sectionId': section_id}
+                arg_null = {'context': context_null, 'seq_len': seq_len,  'frame_offset': frame_offset, 'sectionId': section_id}
+
+                for _, t in enumerate(tqdm(timesteps)):
+                    latent_model_input = latents
+                    timestep = [t]
+
+                    timestep = torch.stack(timestep)
+
+                    self.model.to(self.device)
+                   
+                    noise_pred_cond = self.model(
+                        latent_model_input, t=timestep, vace_context=z, vace_context_scale=context_scale, **arg_c)[0]
+                    noise_pred_uncond = self.model(
+                        latent_model_input, t=timestep, vace_context=z, vace_context_scale=context_scale,**arg_null)[0]
+
+                    noise_pred = noise_pred_uncond + guide_scale * (
+                        noise_pred_cond - noise_pred_uncond)
+
+                    temp_x0 = sample_scheduler.step(
+                        noise_pred.unsqueeze(0),
+                        t,
+                        latents[0].unsqueeze(0),
+                        return_dict=False,
+                        generator=section_generator)[0]
+                    latents = [temp_x0.squeeze(0)]
+                
+                    # break
+                    print(f"\n🔷🔷🔷 prediicted noise shape {latents[0].shape} 🔷🔷🔷\n")
+                    
+                    
+                
+                if section_id == 0:
+                    history_latent.append(latents[0])
+                    generated_latent.append(latents[0])
+                else:
+                    history_latent.append(latents[0][:, -14:])
+                    generated_latent.append(latents[0][:, -14:])
+                        
+                contexts= torch.cat(generated_latent, dim=1)
+                result = self.pick_context(contexts)
+               
+                context_videos = self.decode_latent([result], input_ref_images)
+                if section_id > 0:  # Only for subsequent sections
+                    # Apply frequency separation
+                    appearance, motion = self.separate_appearance_and_motion(context_videos[0])
+                    motion_corrupted = motion + torch.randn_like(motion) * 0.5
+                    modified_video = appearance + motion_corrupted * 0.3
+                    
+                    # Re-encode the modified video
+                    frame_list = [modified_video]
+                else:
+                    frame_list = context_videos
+                import torchvision
+                import torchvision.transforms.functional as TF
+                import numpy as np
+                import imageio
+                
+                output_path = f"output-section-{section_id}.mp4"
+                
+                video_tensor = context_videos[0].cpu().detach()
+        
+                # Normalize from [-1, 1] to [0, 1]
+                video_tensor = (video_tensor + 1.0) / 2.0
+                video_tensor = torch.clamp(video_tensor, 0.0, 1.0)
+                
+                # Convert to NumPy: [T, H, W, C]
+                video_np = video_tensor.permute(1, 2, 3, 0).numpy()
+                video_np_uint8 = (video_np * 255).astype(np.uint8)
+                
+                # Save MP4
+                imageio.mimsave(output_path, video_np_uint8, fps=24)
+                # frame_list = []
+                # for t in range(context_videos[0].shape[1]):  # 81 frames
+                #     frame = context_videos[0][:, t]  # Extract single frame [3, 832, 480]
+                #     frame_list.append(frame)
+                frame_list=[context_videos[0]]
+                context_list=context_videos
+                print(f"\n🔷🔷🔷 prediicted frame shape {frame_list[0].shape} 🔷🔷🔷\n")
+                mask_list=self.create_temporal_blend_mask_for_context(context_list[0].shape)
+                print(f"\n🔷🔷🔷 mask shape {mask_list[0].shape} 🔷🔷🔷\n")
+                
+                    
+        full_history = torch.cat(history_latent, dim=1)
+        for i, latent in enumerate(history_latent):
+                print(f"history_latent[{i}] shape: {latent.shape}")
+                
+        print(f"full history shape: {full_history.shape}")
+
+        x0 = full_history
+        if offload_model:
+            self.model.cpu()
+            torch.cuda.empty_cache()
+        if self.rank == 0:
+            input_ref_images=None
+            print('here')
+            videos = self.decode_latent([x0], input_ref_images)
+
+        del noise, latents
+        del sample_scheduler
+        if offload_model:
+            gc.collect()
+            torch.cuda.synchronize()
+        if dist.is_initialized():
+            dist.barrier()
+
+        return videos[0] if self.rank == 0 else None
+    
+    def separate_appearance_and_motion(self, frames):
+        """Use frequency domain to separate appearance from motion"""
+        # Store original shape
+        C, T, H, W = frames.shape
+        
+        # FFT to frequency domain
+        fft_frames = torch.fft.rfft2(frames, dim=(-2, -1))
+        
+        # Get FFT dimensions
+        fft_h = H
+        fft_w = W // 2 + 1  # rfft2 reduces the last dimension
+        
+        # Create frequency grids
+        # For height: use full frequency range
+        h_freqs = torch.fft.fftfreq(H, device=frames.device)
+        # For width: use rfft frequency range
+        w_freqs = torch.fft.rfftfreq(W, device=frames.device)
+        
+        # Create 2D grid
+        h_grid, w_grid = torch.meshgrid(h_freqs, w_freqs, indexing='ij')
+        
+        # Calculate frequency magnitude
+        freq_magnitude = torch.sqrt(h_grid**2 + w_grid**2)
+        
+        # Create low-pass mask
+        cutoff = 0.1  # Adjust this value
+        low_pass_mask = (freq_magnitude < cutoff).float().to(frames.device)
+        
+        # Ensure mask shape matches fft_frames
+        # fft_frames shape: [C, T, H, W//2+1, 2] (complex) or [C, T, H, W//2+1]
+        if low_pass_mask.shape != fft_frames.shape[-2:]:
+            print(f"Mask shape: {low_pass_mask.shape}, FFT shape: {fft_frames.shape}")
+            # Adjust mask if needed
+            low_pass_mask = low_pass_mask[:fft_h, :fft_w]
+        
+        # Expand mask dimensions to match fft_frames
+        while low_pass_mask.dim() < fft_frames.dim():
+            low_pass_mask = low_pass_mask.unsqueeze(0)
+        
+        # Apply masks
+        appearance_fft = fft_frames * low_pass_mask
+        motion_fft = fft_frames * (1 - low_pass_mask)
+        
+        # Back to spatial domain
+        appearance = torch.fft.irfft2(appearance_fft, s=(H, W))
+        motion = torch.fft.irfft2(motion_fft, s=(H, W))
+        
+        return appearance, motion
+    def pick_context(self,context_frames):
+        
+        def pick_exactly_7_frames(latent, step=4, num_frames=7):
+            T = latent.shape[1]
+            indices = []
+            for i in range(num_frames):
+                idx = T - 1 - step * i
+                if idx < 0:
+                    idx = 0  # clamp to first frame if out of range
+                indices.append(idx)
+           
+            
+            selected_frames = latent[:, indices]
+            return selected_frames
+        
+        # zero_frame = torch.zeros_like(context_frames[:, :1, :, :])
+        gen_frames= context_frames[:, -10:]
+        context_frames=context_frames[:,:-10]
+        overlap=context_frames[:, -4:]
+        context_frames=context_frames[:,:-4]
+        recent= context_frames[:, -1:]
+        context_frames=context_frames[:,:-1]
+        mid_ind = torch.tensor([context_frames.shape[1] - 1, context_frames.shape[1] - 3])
+        mid = context_frames[:, mid_ind]
+        context_frames=context_frames[:,:-3]
+        long= pick_exactly_7_frames(context_frames, step=4, num_frames=5)
+        final_latents = torch.cat([long, mid, recent, overlap ,gen_frames], dim=1)
+        
+        
+        
+        return final_latents
+    
+    def create_temporal_blend_mask_for_context(self, frame_shape, device='cuda'):
+        """
+        Creates temporal blend masks matching the pick_context structure.
+        
+        Context structure from pick_context:
+        - long: 9 frames (sampled at 4x distance) - mostly keep
+        - mid: 2 frames (mid-range sampling) - start blending
+        - recent: 1 frame (most recent) - light blend
+        - gen_frames: 6 frames (recently generated) - gradual blend
+        - overlap: 4 frames (overlap region) - full blend to generate
+        
+        Total: 22 frames with progressive blending
+        
+        Args:
+            context_structure: Dict with frame counts for each segment
+            frame_shape: Shape of a single frame (C, H, W)
+            device: Device to create tensors on
+        
+        Returns:
+            List of mask tensors, one per frame
+        """
+        
+        C, T, H, W = frame_shape # e.g., [3, 81, 832, 480]
+
+        # Create a single mask tensor for all frames
+        mask_tensor = torch.zeros(1, T, H, W, device=self.device)  # [1, 81, 832, 480]
+
+        # Apply your masking pattern to the tensor
+        context_structure = {
+            'long': 5,
+            'mid': 2,
+            'recent': 1,
+            'gen_frames': 10,
+            'overlap': 4
+        }
+
+        # Map structure to frame indices (assuming linear mapping)
+        frames_per_latent = T / 22  # If 22 latent frames map to T pixel frames
+
+        current_frame = 0
+        # Context frames - keep (mask = 0)
+        context_frame_count = int((context_structure['long'] + context_structure['mid'] + 
+                                context_structure['recent']) * frames_per_latent)
+        mask_tensor[:, :context_frame_count] = 0.0
+
+        # Generation frames - replace (mask = 1)
+        gen_start = context_frame_count
+        gen_end = gen_start + int(context_structure['gen_frames'] * frames_per_latent)
+        mask_tensor[:, gen_start:gen_end] = 1.0
+
+        # Overlap frames - blend
+        for i in range(gen_end, T):
+            progress = (i - gen_end) / (T - gen_end - 1) if T > gen_end + 1 else 1.0
+            mask_tensor[:, i] = 0.4 + progress * 0.6
+
+        # Wrap mask tensor in a list
+        masks_for_vae = [mask_tensor]  # List containing [1, T, H, W]
+        
+       
+        return masks_for_vae
 
 
+    
 class WanVaceMP(WanVace):
     def __init__(
             self,
@@ -717,3 +1160,5 @@ class WanVaceMP(WanVace):
         value_output = self.out_q.get()
 
         return value_output
+
+

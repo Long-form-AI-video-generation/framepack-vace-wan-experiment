@@ -288,7 +288,20 @@ def main(args):
                                                                   args.frame_num, SIZE_CONFIGS[args.size], device)
 
     logging.info(f"Generating video...")
-    video = wan_vace.generate(
+    # video = wan_vace.generate(
+    #     args.prompt,
+    #     src_video,
+    #     src_mask,
+    #     src_ref_images,
+    #     size=SIZE_CONFIGS[args.size],
+    #     frame_num=args.frame_num,
+    #     shift=args.sample_shift,
+    #     sample_solver=args.sample_solver,
+    #     sampling_steps=args.sample_steps,
+    #     guide_scale=args.sample_guide_scale,
+    #     seed=args.base_seed,
+    #     offload_model=args.offload_model)
+    video = wan_vace.generate_with_framepack(
         args.prompt,
         src_video,
         src_mask,
@@ -301,7 +314,6 @@ def main(args):
         guide_scale=args.sample_guide_scale,
         seed=args.base_seed,
         offload_model=args.offload_model)
-
     ret_data = {}
     if rank == 0:
         if args.save_dir is None:
