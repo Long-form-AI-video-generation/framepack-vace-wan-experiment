@@ -286,7 +286,9 @@ def main(args):
                                                                   [args.src_mask],
                                                                   [None if args.src_ref_images is None else args.src_ref_images.split(',')],
                                                                   args.frame_num, SIZE_CONFIGS[args.size], device)
-
+    # src_video=wan_vace.prepare_video(args.src_video)
+    # print(f"Total chunks: {len(src_video)}")
+    # print(f"Each chunk shape: {src_video[0].shape}")
     logging.info(f"Generating video...")
     # video = wan_vace.generate(
     #     args.prompt,
@@ -314,6 +316,20 @@ def main(args):
         guide_scale=args.sample_guide_scale,
         seed=args.base_seed,
         offload_model=args.offload_model)
+    
+    # video = wan_vace.generate_video_to_video(
+    #     args.prompt,
+    #     src_video[0],
+    #     src_mask,
+    #     src_ref_images,
+    #     size=SIZE_CONFIGS[args.size],
+    #     frame_num=args.frame_num,
+    #     shift=args.sample_shift,
+    #     sample_solver=args.sample_solver,
+    #     sampling_steps=args.sample_steps,
+    #     guide_scale=args.sample_guide_scale,
+    #     seed=args.base_seed,
+    #     offload_model=args.offload_model)
     ret_data = {}
     if rank == 0:
         if args.save_dir is None:

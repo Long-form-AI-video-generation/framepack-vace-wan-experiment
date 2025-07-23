@@ -268,4 +268,6 @@ def prepare_source(src_video, src_mask, src_ref_images, num_frames, image_size, 
                     left = (canvas_width - new_width) // 2
                     white_canvas[:, :, top:top + new_height, left:left + new_width] = resized_image
                     src_ref_images[i][j] = white_canvas
+    print("src_video type:", type(src_video))
+    print("src_video shape:", src_video.shape if isinstance(src_video, torch.Tensor) else "Not a tensor")
     return src_video, src_mask, src_ref_images
