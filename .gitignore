@@ -4,7 +4,6 @@
 *.pkl
 *.ckpt
 *.DS_Store
-*__pycache__*
 *.cache*
 *.bin
 *.idea
