@@ -4,6 +4,7 @@
 *.pkl
 *.ckpt
 *.DS_Store
+*__pycache__*
 *.cache*
 *.bin
 *.idea
@@ -17,5 +18,5 @@ vace.egg-info
 *resources
 *.ipynb_checkpoints*
 *.vscode
-**/models/
+/models/
 results/
