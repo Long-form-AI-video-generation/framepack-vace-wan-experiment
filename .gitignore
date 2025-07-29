@@ -13,6 +13,7 @@ cache
 build
 dist
 dev
+.env
 vace.egg-info
 .readthedocs.yml
 *resources

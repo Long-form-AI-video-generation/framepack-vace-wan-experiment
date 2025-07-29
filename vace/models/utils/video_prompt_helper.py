@@ -53,7 +53,13 @@ class VideoPromptRefiner:
             result = response.json()
             response_text = result['choices'][0]['message']['content']
             
-            print(response_text)
+            refined_data = self._parse_llm_response(response_text, num_sections)
+            
+            refined_data['original_prompt'] = original_prompt
+            refined_data['num_sections'] = num_sections
+            refined_data['frames_per_section'] = frames_per_section
+            
+            return refined_data
             
         except Exception as e:
             print(f"Error refining prompts: {e}")
@@ -95,6 +101,120 @@ Guidelines:
 
 Focus on creating prompts that will generate a cohesive video when concatenated."""
 
+    def _build_user_prompt(self, original_prompt: str, num_sections: int, context_info: Optional[Dict]) -> str:
+        """Build the user prompt for the LLM."""
+        prompt = f"Original video prompt: \"{original_prompt}\"\n\n"
+        prompt += f"Please divide this into {num_sections} sections for sequential video generation.\n"
+        
+        if context_info:
+            prompt += "\nAdditional context:\n"
+            for key, value in context_info.items():
+                prompt += f"- {key}: {value}\n"
+        
+        prompt += "\nRemember to maintain continuity between sections and enhance the original prompt with specific details that will help generate a coherent video."
+        
+        return prompt
+    
+    def _parse_llm_response(self, response_text: str, num_sections: int) -> Dict:
+        """Parse the LLM response into structured data."""
+        try:
+           
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                data = json.loads(json_str)
+                
+              
+                if self._validate_response_structure(data, num_sections):
+                    return data
+                else:
+                    print("Invalid response structure, using parsed data with corrections")
+                    return self._correct_response_structure(data, num_sections)
+            else:
+                raise ValueError("No JSON found in response")
+                
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"Failed to parse LLM response: {e}")
+            
+            return self._extract_prompts_manually(response_text, num_sections)
+    
+    def _validate_response_structure(self, data: Dict, num_sections: int) -> bool:
+        """Validate the parsed response has the expected structure."""
+        required_keys = ['global_style', 'sections']
+        if not all(key in data for key in required_keys):
+            return False
+        
+        if len(data.get('sections', [])) != num_sections:
+            return False
+        
+        for section in data['sections']:
+            if 'prompt' not in section:
+                return False
+        
+        return True
+    
+    def _correct_response_structure(self, data: Dict, num_sections: int) -> Dict:
+        
+        if 'global_style' not in data:
+            data['global_style'] = "cinematic, high quality"
+        
+        if 'sections' not in data:
+            data['sections'] = []
+        
+       
+        while len(data['sections']) < num_sections:
+            data['sections'].append({
+                'section_id': len(data['sections']),
+                'prompt': f"Continue the video sequence (section {len(data['sections']) + 1})",
+                'key_elements': [],
+                'transition_hint': 'smooth continuation'
+            })
+      
+        for i, section in enumerate(data['sections'][:num_sections]):
+            if 'section_id' not in section:
+                section['section_id'] = i
+            if 'prompt' not in section:
+                section['prompt'] = f"Section {i + 1} of the video"
+            if 'key_elements' not in section:
+                section['key_elements'] = []
+        
+        return data
+    
+    def _extract_prompts_manually(self, response_text: str, num_sections: int) -> Dict:
+        """Manually extract prompts from response text if JSON parsing fails."""
+        lines = response_text.split('\n')
+        sections = []
+        current_section = None
+        
+        for line in lines:
+            if 'section' in line.lower() and ('prompt:' in line.lower() or ':' in line):
+                if current_section and 'prompt' in current_section:
+                    sections.append(current_section)
+                current_section = {
+                    'section_id': len(sections),
+                    'prompt': line.split(':', 1)[-1].strip() if ':' in line else line,
+                    'key_elements': []
+                }
+            elif current_section and line.strip() and not line.strip().startswith('{'):
+                current_section['prompt'] += ' ' + line.strip()
+        
+        if current_section:
+            sections.append(current_section)
+        
+        # Ensure we have the right number of sections
+        while len(sections) < num_sections:
+            sections.append({
+                'section_id': len(sections),
+                'prompt': f"Continue section {len(sections) + 1}",
+                'key_elements': []
+            })
+        
+        return {
+            'global_style': 'extracted from response',
+            'sections': sections[:num_sections],
+            'consistency_notes': 'Manually extracted prompts'
+        }
+    
     def _fallback_prompt_division(self, original_prompt: str, num_sections: int) -> Dict:
         """Simple fallback prompt division if LLM fails."""
         base_prompt = original_prompt.strip()
@@ -121,3 +241,69 @@ Focus on creating prompts that will generate a cohesive video when concatenated.
             'narrative_arc': 'continuous sequence',
             'consistency_notes': 'Fallback division - maintain all original elements'
         }
+    
+    def format_section_prompt(self, section_data: Dict, global_style: str) -> str:
+        """
+        Format a section's data into a complete prompt for video generation.
+        
+        Args:
+            section_data: Dictionary containing section information
+            global_style: Global style to prepend
+            
+        Returns:
+            Formatted prompt string
+        """
+        prompt_parts = [global_style, section_data['prompt']]
+        
+        # Add optional elements if they exist
+        if 'camera_movement' in section_data:
+            prompt_parts.append(f"Camera: {section_data['camera_movement']}")
+        
+        if 'time_of_day' in section_data:
+            prompt_parts.append(f"Time: {section_data['time_of_day']}")
+        
+        if 'emotion' in section_data:
+            prompt_parts.append(f"Mood: {section_data['emotion']}")
+        
+        return '. '.join(filter(None, prompt_parts))
+
+
+def use_prompt_refiner(api_key: str, video_prompt: str, num_sections: int):
+    """Example of how to use the VideoPromptRefiner."""
+    
+    
+    refiner = VideoPromptRefiner(api_key)
+    
+   
+    context_info = {
+        "video_length": f"{num_sections * 70} frames total",
+        "style_preference": "cinematic and smooth",
+        "target_mood": "epic and inspiring"
+    }
+    
+   
+    refined_data = refiner.refine_prompts_for_sections(
+        original_prompt=video_prompt,
+        num_sections=num_sections,
+        frames_per_section=70,
+        overlap_frames=2,
+        context_info=context_info
+    )
+    
+    
+    print(f"Original prompt: {refined_data['original_prompt']}")
+    print(f"\nGlobal style: {refined_data.get('global_style', 'N/A')}")
+    print(f"Narrative arc: {refined_data.get('narrative_arc', 'N/A')}")
+    print(f"\nSection prompts:")
+    
+    for section in refined_data['sections']:
+        print(f"\n--- Section {section['section_id'] + 1} ---")
+        formatted_prompt = refiner.format_section_prompt(
+            section, 
+            refined_data.get('global_style', '')
+        )
+        print(f"Prompt: {formatted_prompt}")
+        if 'transition_hint' in section:
+            print(f"Transition: {section['transition_hint']}")
+    
+    return refined_data
