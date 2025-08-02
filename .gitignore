@@ -13,10 +13,11 @@ cache
 build
 dist
 dev
+.env
 vace.egg-info
 .readthedocs.yml
 *resources
 *.ipynb_checkpoints*
 *.vscode
-models/
+/models/
 results/
