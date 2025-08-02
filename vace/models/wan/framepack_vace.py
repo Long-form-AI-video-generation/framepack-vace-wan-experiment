@@ -26,8 +26,8 @@ from wan.text2video import (WanT2V, T5EncoderModel, WanVAE, shard_model, FlowDPM
                                get_sampling_sigmas, retrieve_timesteps, FlowUniPCMultistepScheduler)
 from .modules.model import VaceWanModel
 from ..utils.preprocessor import VaceVideoProcessor
+from ..utils.framepack_compressor import FramePackCompressor
 
-from ..utils.video_prompt_helper import VideoPromptRefiner
 
 class FramepackVace(WanT2V):
     def __init__(
@@ -315,7 +315,7 @@ class FramepackVace(WanT2V):
         LATENT_WINDOW = 85
         GENERATION_FRAMES = 74
         CONTEXT_FRAMES = 11  
-        frame_num=205
+        frame_num=121
         section_window = 41
         section_num = math.ceil(frame_num / section_window)
         
@@ -324,23 +324,13 @@ class FramepackVace(WanT2V):
         accumulated_latents = []    
         context_buffer = None      
         
-        print(f'Total frames requested: {frame_num}')
-        print(f'Total sections to generate: {section_num}')
-        print(f'Latent structure: {CONTEXT_FRAMES} context + {GENERATION_FRAMES} generation = {LATENT_WINDOW} total')
-        api_key = os.getenv("OPENROUTER_API_KEY")
-        refiner = VideoPromptRefiner(api_key)
         
-        refined_data = refiner.refine_prompts_for_sections(
-        original_prompt=input_prompt,
-        num_sections=section_num,
-        frames_per_section=22,
-        overlap_frames=2
+        
+        compressor = FramePackCompressor(
+        lambda_compression=2.0,
+        max_history_frames=150  
     )
-        
-        self.section_prompts = refined_data['sections']
-        self.global_style = refined_data.get('global_style', '')
-        
-       
+    
         
         if n_prompt == "":
             n_prompt = self.sample_neg_prompt
@@ -357,13 +347,25 @@ class FramepackVace(WanT2V):
             print(f"SECTION {section_id+1} / {section_num}")
             print(f"{'='*60}\n")
             
+            def get_tensor_list_memory(tensor_list):
+                total_bytes = 0
+                for tensor in tensor_list:
+                    if isinstance(tensor, torch.Tensor):
+                        total_bytes += tensor.numel() * tensor.element_size()
+                total_mb = total_bytes / (1024 ** 2)
+                total_gb = total_bytes / (1024 ** 3)
+                print(f"Total memory used by tensor list: {total_mb:.2f} MB ({total_gb:.4f} GB)")
+                
+            get_tensor_list_memory(accumulated_latents)
+            get_tensor_list_memory(all_generated_latents)
+            
             # Create unique seed for each section
             section_seed = base_seed + section_id * 1000
             section_generator = torch.Generator(device=self.device)
             section_generator.manual_seed(section_seed)
             
-            prompt = next(s['prompt'] for s in self.section_prompts if s['section_id'] == section_id)
-            print('section prompt', prompt)
+           
+          
             if not self.t5_cpu:
                 self.text_encoder.model.to(self.device)
                 context = self.text_encoder([input_prompt], self.device)
@@ -392,10 +394,14 @@ class FramepackVace(WanT2V):
                 print(f"Section {section_id} - building hierarchical context")
                 
              
-                context_latent = self.build_hierarchical_context_latent(
-                    accumulated_latents, section_id)
+                # context_latent = self.build_hierarchical_context_latent(
+                #     accumulated_latents, section_id)
                 
-                
+                context_latent = compressor.select_context_frames(
+                accumulated_latents, 
+                num_context_frames=11
+            )
+                # print('context shape', context_latent.shape)
                 context_decoded = self.decode_latent([context_latent], None)
                 
                 
@@ -406,8 +412,17 @@ class FramepackVace(WanT2V):
                     context_decoded = [appearance + motion_perturbed * 0.5]
                 
                 
-                hierarchical_frames = self.pick_context_v2(context_decoded[0], section_id)
-                current_frames = [hierarchical_frames]
+                # hierarchical_frames = self.pick_context_v2(context_decoded[0], section_id)
+                
+                current_frames = [context_decoded[0]]
+                if len(current_frames) > 0:
+                    first_item = current_frames[0]
+                    print(f"Type of first item: {type(first_item)}")
+
+                    if isinstance(first_item, torch.Tensor):
+                        print(f"Shape of first item: {first_item.shape}")
+                        print(f"Dtype: {first_item.dtype}")
+                        print(f"Device: {first_item.device}")
                 
                
                 current_masks = self.create_temporal_blend_mask_v2(
@@ -420,6 +435,7 @@ class FramepackVace(WanT2V):
                
                 context_variation = 0.7 + torch.rand(1).item() * 0.6
                 context_scale_section = context_scale * context_variation
+                del context_decoded,context_latent
             
            
             z0 = self.vace_encode_frames(current_frames, current_ref_images, masks=current_masks)
@@ -509,37 +525,37 @@ class FramepackVace(WanT2V):
                     latents = [temp_x0.squeeze(0)]
                     del noise_pred_cond, noise_pred_uncond
                     # Debug first and last steps
-                    if step_idx == 0 or step_idx == len(timesteps) - 1:
-                        print(f"  Step {step_idx}: t={t.item():.3f}, "
-                            f"latent stats: mean={latents[0].mean().item():.3f}, "
-                            f"std={latents[0].std().item():.3f}")
+                    
             
             del noise, sample_scheduler, timesteps
-            del z, z0, m0  # Clean up encoding tensors
+            del z, z0, m0 # Clean up encoding tensors
             torch.cuda.empty_cache()
             if section_id == 0:
                 print(f"Section 0: Removing {1} reference frames from latent")
             
               
                 latent_without_ref = latents[0][:, 1:-3, :, :]
-                accumulated_latents.append(latent_without_ref.clone())
+                accumulated_latents = compressor.add_new_section([], latent_without_ref)
+                # accumulated_latents.append(latent_without_ref.clone())
                 
                
                 all_generated_latents.append(latent_without_ref)
             else:
-                if section_id > 2: 
-                    accumulated_latents.pop(0)
-                else: 
-                    accumulated_latents.append(latents[0].clone())
-                print(len(accumulated_latents), 'accumleated length')
-                if section_id == 0:
-                    # First section without reference images
-                    all_generated_latents.append(latents[0])
-                else:
-                    # Take only newly generated frames
-                    new_content = latents[0][:, -GENERATION_FRAMES:, :, :]
-                    new_content = new_content[:, 3:, :, :]
-                    all_generated_latents.append(new_content)
+                accumulated_latents=compressor.add_new_section(accumulated_latents, latents[0])
+                
+                # accumulated_latents.append(latents[0].clone())
+                stats = compressor.get_compression_stats(accumulated_latents)
+                print(f"Compressed history frames: {len(accumulated_latents)}")
+                print(f"Memory saved: {stats['memory_saved_mb']:.2f} MB")
+                print(f"Compression ratio: {stats['compression_ratio']:.2f}x")
+            if section_id == 0:
+                # First section without reference images
+                all_generated_latents.append(latents[0])
+            else:
+                # Take only newly generated frames
+                new_content = latents[0][:, -GENERATION_FRAMES:, :, :]
+                new_content = new_content[:, 3:, :, :]
+                all_generated_latents.append(new_content)
            
             del latents
             del context, context_null
@@ -557,7 +573,7 @@ class FramepackVace(WanT2V):
         if self.rank == 0 and all_generated_latents:
           
             final_latent = torch.cat(all_generated_latents, dim=1)
-            print(f"\nFinal latent shape: {final_latent.shape}")
+            
             
            
             final_video = self.decode_latent([final_latent], None)
@@ -566,8 +582,8 @@ class FramepackVace(WanT2V):
                 self.model.cpu()
                 torch.cuda.empty_cache()
             
-            del noise, latents
-            del sample_scheduler
+            
+        
             if offload_model:
                 gc.collect()
                 torch.cuda.synchronize()
@@ -607,7 +623,7 @@ class FramepackVace(WanT2V):
         
         
         if low_pass_mask.shape != fft_frames.shape[-2:]:
-            print(f"Mask shape: {low_pass_mask.shape}, FFT shape: {fft_frames.shape}")
+            
             
             low_pass_mask = low_pass_mask[:fft_h, :fft_w]
         
@@ -704,12 +720,7 @@ class FramepackVace(WanT2V):
         
         assert final_frames.shape[1] == TOTAL_FRAMES, \
             f"Expected {TOTAL_FRAMES} frames, got {final_frames.shape[1]}"
-        
-        if section_id % 5 == 0:
-            print(f"\nContext selection debug (section {section_id}):")
-            print(f"  Input frames: {T}")
-            print(f"  Selected indices: {selected_indices}")
-            print(f"  Output shape: {final_frames.shape}")
+       
         
         return final_frames
 
@@ -743,7 +754,7 @@ class FramepackVace(WanT2V):
         with open(f"debug_section_{section_id:03d}.json", 'w') as f:
             json.dump(debug_info, f, indent=2)
         
-        print(f"Saved debug output to {output_path}")
+       
 
     
     def build_hierarchical_context_latent(self, accumulated_latents, section_id):
@@ -757,7 +768,7 @@ class FramepackVace(WanT2V):
         all_prev = torch.cat(accumulated_latents, dim=1)
         total_frames = all_prev.shape[1]
         
-        print(f"Building context from {total_frames} accumulated frames")
+       
         
         return all_prev
     def create_temporal_blend_mask_v2(self, frame_shape, section_id, initial=False):
@@ -818,7 +829,7 @@ class FramepackVace(WanT2V):
                 ("Gen", LONG_FRAMES+MID_FRAMES+RECENT_FRAMES+OVERLAP_FRAMES, GEN_FRAMES)
             ]:
                 mean_val = mask[0, start:start+length, 0, 0].mean().item()
-                print(f"  {name}: {mean_val:.3f}")
+                
         
         return [mask]
     
@@ -883,7 +894,7 @@ class WanVaceMP(FramepackVace):
             all_initialized = all(event.is_set() for event in initialized_events)
             if not all_initialized:
                 time.sleep(0.1)
-        print('Inference model is initialized', flush=True)
+        
         self.in_q_list = in_q_list
         self.out_q = out_q
         self.inference_pids = context.pids()
@@ -905,7 +916,7 @@ class WanVaceMP(FramepackVace):
         try:
             world_size = pmi_world_size * gpu_infer
             rank = pmi_rank * gpu_infer + gpu
-            print("world_size", world_size, "rank", rank, flush=True)
+           
 
             torch.cuda.set_device(gpu)
             dist.init_process_group(
