@@ -18,5 +18,7 @@ vace.egg-info
 *resources
 *.ipynb_checkpoints*
 *.vscode
-models/
+/models/
 results/
+*.mp4
+*.png
