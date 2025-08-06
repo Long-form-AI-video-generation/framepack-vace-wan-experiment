@@ -18,7 +18,7 @@ from PIL import Image
 import wan
 from wan.utils.utils import cache_video, cache_image, str2bool
 
-from models.wan import WanVace
+from models.wan import WanVaceLong
 from models.wan.configs import WAN_CONFIGS, SIZE_CONFIGS, MAX_AREA_CONFIGS, SUPPORTED_SIZES
 from annotators.utils import get_annotator
 
@@ -271,7 +271,7 @@ def main(args):
         logging.info(f"Extended prompt: {args.prompt}")
 
     logging.info("Creating WanT2V pipeline.")
-    wan_vace = WanVace(
+    long_wan = WanVaceLong(
         config=cfg,
         checkpoint_dir=args.ckpt_dir,
         device_id=device,
@@ -282,13 +282,13 @@ def main(args):
         t5_cpu=args.t5_cpu,
     )
 
-    src_video, src_mask, src_ref_images = wan_vace.prepare_source([args.src_video],
+    src_video, src_mask, src_ref_images = long_wan.prepare_source([args.src_video],
                                                                   [args.src_mask],
                                                                   [None if args.src_ref_images is None else args.src_ref_images.split(',')],
                                                                   args.frame_num, SIZE_CONFIGS[args.size], device)
 
     logging.info(f"Generating video...")
-    video = wan_vace.generate(
+    video = long_wan.generate(
         args.prompt,
         src_video,
         src_mask,
