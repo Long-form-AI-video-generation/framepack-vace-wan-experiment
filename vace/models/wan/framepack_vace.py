@@ -455,7 +455,7 @@ class FramepackVace(WanT2V):
             @contextmanager
             def noop_no_sync():
                 yield
-            
+            sample_solver ='dpm++'
             no_sync = getattr(self.model, 'no_sync', noop_no_sync)
             # sample_solver='dpm++'
             # sampling_steps=20
@@ -471,15 +471,6 @@ class FramepackVace(WanT2V):
                         sample_scheduler,
                         device=self.device,
                         sigmas=sampling_sigmas)
-                elif sample_solver == 'unipc':
-                    
-                    sample_scheduler = FlowUniPCMultistepScheduler(
-                        num_train_timesteps=self.num_train_timesteps,
-                        shift=1,
-                        use_dynamic_shifting=False)
-                    sample_scheduler.set_timesteps(
-                        sampling_steps, device=self.device, shift=shift)
-                    timesteps = sample_scheduler.timesteps
                 else:
                     raise NotImplementedError(f"Unsupported solver: {sample_solver}")
 
