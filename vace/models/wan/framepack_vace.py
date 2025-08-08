@@ -24,6 +24,7 @@ from wan.text2video import (WanT2V, T5EncoderModel, WanVAE, shard_model, FlowDPM
                                get_sampling_sigmas, retrieve_timesteps, FlowUniPCMultistepScheduler)
 from .modules.model import VaceWanModel
 from ..utils.preprocessor import VaceVideoProcessor
+from ..utils.history_compressor import FramePackCompressor
 
 
 class FramepackVace(WanT2V):
@@ -37,6 +38,9 @@ class FramepackVace(WanT2V):
         dit_fsdp=False,
         use_usp=False,
         t5_cpu=False,
+        enable_compression=True,
+        lambda_compression=2.0,
+        max_history_frames=100,
     ):
         r"""
         Initializes the Wan text-to-video generation model components.
@@ -122,6 +126,26 @@ class FramepackVace(WanT2V):
             zero_start=True,
             seq_len=32760,
             keep_last=True)
+        
+        self.enable_compression = enable_compression
+        if self.enable_compression:
+            base_kernel_sizes = [
+                (1, 1, 1),   # Light spatial compression
+                (1, 2, 3),   # Medium compression
+                (1, 4, 4),   # Heavy compression
+            ]
+            
+            self.compressor = FramePackCompressor(
+                lambda_compression=lambda_compression,
+                base_kernel_sizes=base_kernel_sizes,
+                max_history_frames=max_history_frames
+            )
+            
+            self.compressed_history = []
+            print(f"FramePack compression enabled with λ={lambda_compression}")
+        else:
+            self.compressor = None
+            print("FramePack compression disabled")
 
     def vace_encode_frames(self, frames, ref_images, masks=None, vae=None):
         vae = self.vae if vae is None else vae
@@ -319,7 +343,12 @@ class FramepackVace(WanT2V):
 
 
         all_generated_latents = []  
-        accumulated_latents = []    
+        all_generated_latents = []
+        if self.enable_compression:
+            self.compressed_history = []  # Reset compression history
+            accumulated_latents = []  # Keep for first section compatibility
+        else:
+            accumulated_latents = []    
         context_buffer = None      
 
         print(f'Total frames requested: {frame_num}')
@@ -351,8 +380,17 @@ class FramepackVace(WanT2V):
                 total_gb = total_bytes / (1024 ** 3)
                 print(f"Total memory used by tensor list: {total_mb:.2f} MB ({total_gb:.4f} GB)")
                 
-            get_tensor_list_memory(accumulated_latents)
-            get_tensor_list_memory(all_generated_latents)
+            # Replace the memory monitoring section with:
+            # if self.enable_compression:
+            #     get_tensor_list_memory(self.compressed_history)
+            #     if self.compressed_history:
+            #         stats = self.compressor.get_compression_stats(
+            #             [torch.cat([s for s in self.compressed_history], dim=1)]
+            #         )
+            #         print(f"Compression stats: {stats['compression_ratio']:.2f}x ratio, "
+            #             f"{stats['memory_saved_mb']:.1f} MB saved")
+            # else:
+            #     get_tensor_list_memory(accumulated_latents, "Accumulated latents")
 
             # Create unique seed for each section
             section_seed = base_seed + section_id * 1000
@@ -388,8 +426,38 @@ class FramepackVace(WanT2V):
                 print(f"Section {section_id} - building hierarchical context")
 
 
-                context_latent = self.build_hierarchical_context_latent(
-                    accumulated_latents, section_id)
+                if self.enable_compression:
+                    # Use compressed context selection
+                    hierarchical_frames = self.compressor.select_context_frames(
+                        self.compressed_history,
+                        num_context_frames=CONTEXT_FRAMES,
+                        add_generation_frames=True
+                    )
+                    
+                    if hierarchical_frames.numel() == 0:
+                        # Fallback to last section if compression fails
+                        print("Compression failed, using fallback...")
+                        hierarchical_frames = self.compressed_history[-1] if self.compressed_history else None
+                        
+                    if hierarchical_frames is not None:
+                        print(f"Compressed context shape: {hierarchical_frames.shape}")
+                        current_frames = self.decode_latent([hierarchical_frames], None)
+                        current_masks = self.create_temporal_blend_mask_v2(
+                            current_frames[0].shape, section_id)
+                    else:
+                        # Emergency fallback
+                        current_frames = input_frames
+                        current_masks = input_masks
+                        
+                else:
+                    # Original context building
+                    context_latent = self.build_hierarchical_context_latent(
+                        accumulated_latents, section_id)
+                    
+                    hierarchical_frames = self.pick_context_v2(context_latent, section_id)
+                    current_frames = self.decode_latent([hierarchical_frames], None)
+                    current_masks = self.create_temporal_blend_mask_v2(
+                        current_frames[0].shape, section_id)
                 
 
                 # context_decoded = self.decode_latent([context_latent], None)
@@ -397,20 +465,20 @@ class FramepackVace(WanT2V):
                 # get_tensor_list_memory(context_decoded)
                 # self.model.to(self.device)
 
-                if section_id > 1:
-                    appearance, motion = self.separate_appearance_and_motion(context_latent)
-                    motion_noise = torch.randn_like(motion) * 0.3
-                    motion_perturbed = motion + motion_noise
-                    context_decoded = [appearance + motion_perturbed * 0.5]
+                # if section_id > 1:
+                #     appearance, motion = self.separate_appearance_and_motion(context_latent)
+                #     motion_noise = torch.randn_like(motion) * 0.3
+                #     motion_perturbed = motion + motion_noise
+                #     context_decoded = [appearance + motion_perturbed * 0.5]
 
 
-                hierarchical_frames = self.pick_context_v2(context_latent, section_id)
-                current_frames = self.decode_latent([hierarchical_frames], None)
-                print('current frames shape', current_frames[0].shape )
-                current_masks = self.create_temporal_blend_mask_v2(
-                    current_frames[0].shape, section_id)
+                # hierarchical_frames = self.pick_context_v2(context_latent, section_id)
+                # current_frames = self.decode_latent([hierarchical_frames], None)
+                # print('current frames shape', current_frames[0].shape )
+                # current_masks = self.create_temporal_blend_mask_v2(
+                #     current_frames[0].shape, section_id)
                 current_ref_images = None
-                print('current mask shape', current_masks[0].shape )
+                # print('current mask shape', current_masks[0].shape )
                 
                 frame_offset = min(LATENT_WINDOW + (section_id - 1) * GENERATION_FRAMES, 100)
 
@@ -522,38 +590,50 @@ class FramepackVace(WanT2V):
                     del noise_pred, noise_pred_uncond,noise_pred_cond
                     
             del context, context_null,z, noise
+            
+            # Replace the entire latent history update section with:
             if section_id == 0:
-                print(f"Section 0: Removing {1} reference frames from latent")
-
-                if section_num==1:
+                print(f"Section 0: Processing first section")
+                if section_num == 1:
                     latent_without_ref = latents[0]
-                    accumulated_latents.append(latent_without_ref)
-
-
+                    if self.enable_compression:
+                        self.compressed_history = self.compressor.add_new_section(
+                            self.compressed_history, latent_without_ref)
+                    else:
+                        accumulated_latents.append(latent_without_ref)
                     all_generated_latents.append(latent_without_ref)
-                    
                 else: 
-                    latent_without_ref = latents[0][:, 1:-10, :, :]
-                    accumulated_latents.append(latent_without_ref)
-
-
+                    latent_without_ref = latents[0][:, 1:-8, :, :]
+                    if self.enable_compression:
+                        self.compressed_history = self.compressor.add_new_section(
+                            self.compressed_history, latent_without_ref)
+                    else:
+                        accumulated_latents.append(latent_without_ref)
                     all_generated_latents.append(latent_without_ref)
-               
+            
             else:
-                if section_id > 2:
-                    accumulated_latents.pop(0)
-                new=latents[0][:, -GENERATION_FRAMES:, :, :]
-                accumulated_latents.append(new)
+                # Add new section to compressed history
+                new_content = latents[0][:, -GENERATION_FRAMES:, :, :]
+                
+                
+                if self.enable_compression:
+                    self.compressed_history = self.compressor.add_new_section(
+                        self.compressed_history, new_content)
+                    print(f"Compressed history now has {len(self.compressed_history)} sections")
+                else:
+                    if section_id > 2:
+                        accumulated_latents.pop(0)
+                    accumulated_latents.append(new_content)
 
+                # For final output
                 if section_id == 0:
-                    # First section without reference images
                     all_generated_latents.append(latents[0])
                 else:
-                    # Take only newly generated frames
-                    new_content = latents[0][:, -GENERATION_FRAMES:, :, :]
-                    new_content = new_content[:, 11:, :, :]
-                    all_generated_latents.append(new_content)
-                    del new_content
+                    final_new_content = new_content[:, 11:, :, :]
+                    all_generated_latents.append(final_new_content)
+                    del final_new_content
+                
+                del new_content
             torch.cuda.synchronize()    
             torch.cuda.empty_cache()
             gc.collect()

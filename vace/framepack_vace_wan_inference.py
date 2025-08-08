@@ -290,7 +290,7 @@ def main(args):
         src_mask,
         src_ref_images,
         size=SIZE_CONFIGS[args.size],
-        frame_num=args.frame_num,
+        frame_num=320,
         shift=args.sample_shift,
         sample_solver ='dpm++',
         sampling_steps=20,
