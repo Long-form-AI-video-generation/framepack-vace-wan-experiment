@@ -290,8 +290,8 @@ class FramepackVace(WanT2V):
                  input_ref_images,
                  
                  
-                 size=(1280, 720),
-                 frame_num=41,
+                 size=None,
+                 frame_num=81,
                  context_scale=1.0,
                  shift=5.0,
                  sample_solver='dpm++',
@@ -299,7 +299,8 @@ class FramepackVace(WanT2V):
                  guide_scale=5.0,
                  n_prompt="",
                  seed=-1,
-                 offload_model=True):
+                 offload_model=True,
+                 progress_callback=None):
         """
         Generates long videos using hierarchical context with frame packing.
         
@@ -313,7 +314,7 @@ class FramepackVace(WanT2V):
         LATENT_WINDOW = 41  
         GENERATION_FRAMES = 30
         CONTEXT_FRAMES = 11
-        # frame_num=300
+        # frame_num=121
         section_window = 41 
         section_num = math.ceil(frame_num / section_window)
 
@@ -341,7 +342,11 @@ class FramepackVace(WanT2V):
             print(f"\n{'='*60}")
             print(f"SECTION {section_id+1} / {section_num}")
             print(f"{'='*60}\n")
-            
+            if progress_callback:
+                progress_callback(
+                    overall_progress, 
+                    desc=f"📹 Generating Section {section_id + 1}/{section_num} | Frames: {section_id * GENERATION_FRAMES}-{min((section_id + 1) * GENERATION_FRAMES, frame_num)}"
+                )
             def get_tensor_list_memory(tensor_list):
                 total_bytes = 0
                 for tensor in tensor_list:
@@ -456,6 +461,7 @@ class FramepackVace(WanT2V):
             def noop_no_sync():
                 yield
             sample_solver ='dpm++'
+            sampling_steps=30
             no_sync = getattr(self.model, 'no_sync', noop_no_sync)
             # sample_solver='dpm++'
             # sampling_steps=20
@@ -471,6 +477,15 @@ class FramepackVace(WanT2V):
                         sample_scheduler,
                         device=self.device,
                         sigmas=sampling_sigmas)
+                    
+                elif sample_solver == 'unipc':
+                    sample_scheduler = FlowUniPCMultistepScheduler(
+                        num_train_timesteps=self.num_train_timesteps,
+                        shift=1,
+                        use_dynamic_shifting=False)
+                    sample_scheduler.set_timesteps(
+                        sampling_steps, device=self.device, shift=shift)
+                    timesteps = sample_scheduler.timesteps
                 else:
                     raise NotImplementedError(f"Unsupported solver: {sample_solver}")
 

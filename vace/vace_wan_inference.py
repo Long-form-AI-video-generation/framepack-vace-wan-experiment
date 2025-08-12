@@ -296,8 +296,8 @@ def main(args):
         size=SIZE_CONFIGS[args.size],
         frame_num=args.frame_num,
         shift=args.sample_shift,
-        sample_solver=args.sample_solver,
-        sampling_steps=args.sample_steps,
+        sample_solver='dpm++',
+        sampling_steps=20,
         guide_scale=args.sample_guide_scale,
         seed=args.base_seed,
         offload_model=args.offload_model)
