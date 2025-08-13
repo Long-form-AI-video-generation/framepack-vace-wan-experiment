@@ -26,11 +26,10 @@ The codebase was tested with Python 3.10.13, CUDA version 12.4, and PyTorch >= 2
 ### Setup for Model Inference
 You can setup for VACE model inference by running:
 ```bash
-git clone https://github.com/ali-vilab/VACE.git && cd VACE
+git clone https://github.com/Long-form-AI-video-generation/framepack-vace-wan-experiment.git && cd VACE
 pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu124  # If PyTorch is not installed.
 pip install -r requirements.txt
-pip install wan@git+https://github.com/Wan-Video/Wan2.1  # If you want to use Wan2.1-based VACE.
-pip install ltx-video@git+https://github.com/Lightricks/LTX-Video@ltx-video-0.9.1 sentencepiece --no-deps # If you want to use LTX-Video-0.9-based VACE. It may conflict with Wan.
+pip install wan@git+https://github.com/Wan-Video/Wan2.1  
 ```
 Please download your preferred base model to `<repo-root>/models/`. 
 
