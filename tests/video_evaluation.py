@@ -184,11 +184,11 @@ class FramepackVideoEvaluator:
         if num_frames <= initial_frames:
             return boundaries
         
-        # First boundary after initial section
+        
         boundaries.append(initial_frames)
         
-        # Calculate subsequent boundaries
-        advance_frames = generation_frames - context_frames  # 19 frames
+        
+        advance_frames = generation_frames - context_frames 
         current_pos = initial_frames
         
         while current_pos + advance_frames < num_frames:
