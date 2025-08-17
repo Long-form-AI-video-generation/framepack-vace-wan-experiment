@@ -26,11 +26,13 @@ from vace.models.wan import FramepackVace
 from vace.models.wan.configs import WAN_CONFIGS, SIZE_CONFIGS, MAX_AREA_CONFIGS, SUPPORTED_SIZES
 
 def benchmark_generate_with_framepack(
-    output_csv="framepack_benchmark.csv"
+     frame_nums,
+    output_csv="framepack_benchmark.csv",
+  
 ):
     print('benchmarking framepack')
     results = []
-    frame_nums = [121,250]
+    
 
  
     for frame_num in frame_nums:
@@ -68,7 +70,7 @@ def benchmark_generate_with_framepack(
         src_video, src_mask, src_ref_images = framepack_vace.prepare_source([src_video],
                                                                     [src_mask],
                                                                     [None if src_ref_images is None else src_ref_images.split(',')],
-                                                                    81, SIZE_CONFIGS[size], 'cuda:0')
+                                                                    121, SIZE_CONFIGS[size], 'cuda:0')
 
         print(f"\n=== Running frame_num={frame_num} ===")
         success = True
@@ -132,11 +134,13 @@ def benchmark_generate_with_framepack(
 
     return results
 def benchmark_generate_with_vace(
+    
     output_csv="vace_benchmark.csv"
+   
 ):
     print('benchmarking vace')
     results = []
-    frame_nums = [121,250]
+   
 
    
     for frame_num in frame_nums:
@@ -238,8 +242,9 @@ def benchmark_generate_with_vace(
 
     return results
 def main():
-    benchmark_generate_with_framepack()
-    benchmark_generate_with_vace()
+    frame_nums = [121,150,250, 350, 450]
+    benchmark_generate_with_framepack(frame_nums)
+    benchmark_generate_with_vace(frame_nums)
    
     import pandas as pd
     import matplotlib.pyplot as plt
@@ -247,25 +252,36 @@ def main():
     df_fp = pd.read_csv("framepack_benchmark.csv")
     df_base = pd.read_csv("vace_benchmark.csv")
 
-    plt.figure(figsize=(10,6))
-    plt.plot(df_fp["frame_num"], df_fp["peak_memory_MB"], "-o", label="FramePack")
-    plt.plot(df_base["frame_num"], df_base["peak_memory_MB"], "-o", label="Baseline")
+    plt.figure(figsize=(12,6))
+
+  
+    plt.plot(df_fp["frame_num"], df_fp["peak_memory_MB"], "-o", label="FramePack Memory", color="green")
+    plt.plot(df_base["frame_num"], df_base["peak_memory_MB"], "-o", label="Baseline Memory", color="brown")
+
+ 
+    oom_fp = df_fp[df_fp["oom"] == 1]
+    oom_base = df_base[df_base["oom"] == 1]
+
+    plt.scatter(oom_fp["frame_num"], oom_fp["peak_memory_MB"], color='red', marker='x', s=100, label="FramePack OOM")
+    plt.scatter(oom_base["frame_num"], oom_base["peak_memory_MB"], color='black', marker='x', s=100, label="Baseline OOM")
+
     plt.xlabel("Frame Number")
     plt.ylabel("Peak Memory (MB)")
-    plt.title("Memory Usage Comparison")
-    plt.legend()
     plt.grid(True)
-    plt.savefig("memory_comparison.png")
 
-    plt.figure(figsize=(10,6))
-    plt.plot(df_fp["frame_num"], df_fp["time_seconds"], "-o", label="FramePack")
-    plt.plot(df_base["frame_num"], df_base["time_seconds"], "-o", label="Baseline")
-    plt.xlabel("Frame Number")
-    plt.ylabel("Execution Time (s)")
-    plt.title("Execution Time Comparison")
-    plt.legend()
-    plt.grid(True)
-    plt.savefig("time_comparison.png")  # saves the plot
+    
+    ax2 = plt.gca().twinx()
+    ax2.plot(df_fp["frame_num"], df_fp["time_seconds"], "--s", color="blue", label="FramePack Time")
+    ax2.plot(df_base["frame_num"], df_base["time_seconds"], "--s", color="orange", label="Baseline Time")
+    ax2.set_ylabel("Execution Time (s)")
+
+   
+    lines, labels = plt.gca().get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    plt.legend(lines + lines2, labels + labels2, loc='upper left')
+
+    plt.title("Memory and Time Comparison with OOM Errors")
+    plt.savefig("memory_time_oom_comparison.png")
     plt.close()
    
 

@@ -313,9 +313,16 @@ class FramepackVace(WanT2V):
         LATENT_WINDOW = 41  
         GENERATION_FRAMES = 30
         CONTEXT_FRAMES = 11
+        INITIAL_FRAMES=121
         # frame_num=300
         section_window = 41 
-        section_num = math.ceil(frame_num / section_window)
+        # section_num = math.ceil(frame_num / section_window)
+        if frame_num <= INITIAL_FRAMES:
+            section_num = 1
+        else:
+            remaining_frames = frame_num - INITIAL_FRAMES
+            effective_step = GENERATION_FRAMES - CONTEXT_FRAMES
+            section_num = 1 + math.ceil(remaining_frames / effective_step)
 
 
         all_generated_latents = []  
