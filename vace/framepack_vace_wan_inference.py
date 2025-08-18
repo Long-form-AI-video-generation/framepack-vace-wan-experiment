@@ -267,7 +267,41 @@ def main(args):
         logging.info(f"Extended prompt: {args.prompt}")
 
     logging.info("Creating WanT2V pipeline.")
-    framepack_vace = FramepackVace(
+    if args.frame_num > 121:
+        print(' framepack for long frames')
+        framepack_vace = FramepackVace(
+            config=cfg,
+            checkpoint_dir=args.ckpt_dir,
+            device_id=device,
+            rank=rank,
+            t5_fsdp=args.t5_fsdp,
+            dit_fsdp=args.dit_fsdp,
+            use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
+            t5_cpu=args.t5_cpu,
+        )
+
+        src_video, src_mask, src_ref_images = framepack_vace.prepare_source([args.src_video],
+                                                                    [args.src_mask],
+                                                                    [None if args.src_ref_images is None else args.src_ref_images.split(',')],
+                                                                    args.frame_num, SIZE_CONFIGS[args.size], device)
+
+        logging.info(f"Generating video...")
+        video = framepack_vace.generate_with_framepack(
+            args.prompt,
+            src_video,
+            src_mask,
+            src_ref_images,
+            size=SIZE_CONFIGS[args.size],
+            frame_num=args.frame_num,
+            shift=args.sample_shift,
+            sample_solver=args.sample_solver,
+            sampling_steps=args.sample_steps,
+            guide_scale=args.sample_guide_scale,
+            seed=args.base_seed,
+            offload_model=args.offload_model)
+    else: 
+        print(' original for short frames')
+        wan_vace = WanVace(
         config=cfg,
         checkpoint_dir=args.ckpt_dir,
         device_id=device,
@@ -278,25 +312,26 @@ def main(args):
         t5_cpu=args.t5_cpu,
     )
 
-    src_video, src_mask, src_ref_images = framepack_vace.prepare_source([args.src_video],
-                                                                  [args.src_mask],
-                                                                  [None if args.src_ref_images is None else args.src_ref_images.split(',')],
-                                                                  args.frame_num, SIZE_CONFIGS[args.size], device)
+        src_video, src_mask, src_ref_images = wan_vace.prepare_source([args.src_video],
+                                                                    [args.src_mask],
+                                                                    [None if args.src_ref_images is None else args.src_ref_images.split(',')],
+                                                                    args.frame_num, SIZE_CONFIGS[args.size], device)
 
-    logging.info(f"Generating video...")
-    video = framepack_vace.generate_with_framepack(
-        args.prompt,
-        src_video,
-        src_mask,
-        src_ref_images,
-        size=SIZE_CONFIGS[args.size],
-        frame_num=args.frame_num,
-        shift=args.sample_shift,
-        sample_solver=args.sample_solver,
-        sampling_steps=args.sample_steps,
-        guide_scale=args.sample_guide_scale,
-        seed=args.base_seed,
-        offload_model=args.offload_model)
+        logging.info(f"Generating video...")
+        video = wan_vace.generate(
+            args.prompt,
+            src_video,
+            src_mask,
+            src_ref_images,
+            size=SIZE_CONFIGS[args.size],
+            frame_num=args.frame_num,
+            shift=args.sample_shift,
+            sample_solver=args.sample_solver,
+            sampling_steps=args.sample_steps,
+            guide_scale=args.sample_guide_scale,
+            seed=args.base_seed,
+            offload_model=args.offload_model)
+
 
     ret_data = {}
     if rank == 0:
