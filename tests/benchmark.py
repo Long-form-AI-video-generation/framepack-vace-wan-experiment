@@ -249,39 +249,65 @@ def main():
     import pandas as pd
     import matplotlib.pyplot as plt
 
+    
     df_fp = pd.read_csv("framepack_benchmark.csv")
     df_base = pd.read_csv("vace_benchmark.csv")
 
-    plt.figure(figsize=(12,6))
+    
+    df_fp["oom"] = (df_fp["success"] == False) | (df_fp["error"] == "OOM")
+    df_base["oom"] = (df_base["success"] == False) | (df_base["error"] == "OOM")
 
-  
-    plt.plot(df_fp["frame_num"], df_fp["peak_memory_MB"], "-o", label="FramePack Memory", color="green")
-    plt.plot(df_base["frame_num"], df_base["peak_memory_MB"], "-o", label="Baseline Memory", color="brown")
-
- 
-    oom_fp = df_fp[df_fp["oom"] == 1]
-    oom_base = df_base[df_base["oom"] == 1]
-
-    plt.scatter(oom_fp["frame_num"], oom_fp["peak_memory_MB"], color='red', marker='x', s=100, label="FramePack OOM")
-    plt.scatter(oom_base["frame_num"], oom_base["peak_memory_MB"], color='black', marker='x', s=100, label="Baseline OOM")
-
-    plt.xlabel("Frame Number")
-    plt.ylabel("Peak Memory (MB)")
-    plt.grid(True)
+    oom_fp = df_fp[df_fp["oom"]]
+    oom_base = df_base[df_base["oom"]]
 
     
-    ax2 = plt.gca().twinx()
-    ax2.plot(df_fp["frame_num"], df_fp["time_seconds"], "--s", color="blue", label="FramePack Time")
-    ax2.plot(df_base["frame_num"], df_base["time_seconds"], "--s", color="orange", label="Baseline Time")
-    ax2.set_ylabel("Execution Time (s)")
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14,6))
+
+    # Left plot: Memory
+    ax1.plot(df_fp["frame_num"], df_fp["peak_memory_MB"], "-o", 
+            label="FramePack Memory", color="green")
+    ax1.plot(df_base["frame_num"], df_base["peak_memory_MB"], "-o", 
+            label="Baseline Memory", color="brown")
+
+    
+    oom_y = 16500 
+
+    ax1.scatter(oom_fp["frame_num"], [oom_y]*len(oom_fp), 
+                color='red', marker='x', s=100, label="FramePack OOM")
+    ax1.scatter(oom_base["frame_num"], [oom_y]*len(oom_base),
+                color='black', marker='x', s=100, label="Baseline OOM")
+
+
+    ax1.set_xlabel("Frame Number")
+    ax1.set_ylabel("Peak Memory (MB)")
+    ax1.grid(True)
+    ax1.legend()
+    ax1.set_title("Memory Usage")
+    ax1.set_ylim(15000, 35000)
+    ax1.set_yticks([15000, 20000, 25000, 30000, 35000])
+
+    # Right plot: Time 
+    ax2.plot(df_fp["frame_num"], df_fp["time_seconds"], "--s", 
+            color="blue", label="FramePack Time")
+    ax2.plot(df_base["frame_num"], df_base["time_seconds"], "--s", 
+            color="orange", label="Baseline Time")
 
    
-    lines, labels = plt.gca().get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    plt.legend(lines + lines2, labels + labels2, loc='upper left')
+    ax2.scatter(oom_fp["frame_num"], [0]*len(oom_fp), 
+                color='red', marker='x', s=100, label="FramePack OOM")
+    ax2.scatter(oom_base["frame_num"], [0]*len(oom_base), 
+                color='black', marker='x', s=100, label="Baseline OOM")
 
-    plt.title("Memory and Time Comparison with OOM Errors")
-    plt.savefig("memory_time_oom_comparison.png")
+    ax2.set_xlabel("Frame Number")
+    ax2.set_ylabel("Execution Time (s)")
+    ax2.grid(True)
+    ax2.legend()
+    ax2.set_title("Execution Time")
+
+    
+    plt.suptitle("Memory and Time Comparison with OOM Errors")
+    plt.tight_layout(rect=[0, 0, 1, 0.96])  # leave space for main title
+    plt.savefig("memory_time_oom_comparison_side_by_side.png")
     plt.close()
    
 
