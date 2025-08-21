@@ -238,7 +238,7 @@ class ComparativeVideoEvaluator:
         
         flow_magnitudes = []
         
-        for t in range(min(T - 1, 100)):
+        for t in range(T - 1):
             frame1 = cv2.cvtColor(video_np[t], cv2.COLOR_RGB2GRAY)
             frame2 = cv2.cvtColor(video_np[t + 1], cv2.COLOR_RGB2GRAY)
             
@@ -793,13 +793,7 @@ class ComparativeVideoEvaluator:
         ax6.legend()
         ax6.grid(True, axis='y', alpha=0.3)
         
-        
-        ax7 = fig.add_subplot(gs[1, 3], projection='polar')
-        
-        
-        categories = ['FVD\n(inverted)', 'Quality\nRetention', 'Temporal\nConsistency', 
-                      'Length\nImprovement', 'Low\nArtifacts']
-        
+    
         
         fvd_norm = max(0, min(1, 1 - (fvd_score / 200)))  
         artifacts_norm = max(0, min(1, 1 - (boundary_artifacts - 1) / 2))  
@@ -808,19 +802,7 @@ class ComparativeVideoEvaluator:
         values = [fvd_norm, quality_retention, temporal_fp, length_norm, artifacts_norm]
         values += values[:1] 
         
-        angles = np.linspace(0, 2 * np.pi, len(categories), endpoint=False)
-        angles = np.concatenate((angles, [angles[0]]))
-        
-        ax7.plot(angles, values, 'o-', linewidth=2, color='#e74c3c', label='Frame-Pack Model')
-        ax7.fill(angles, values, alpha=0.25, color='#e74c3c')
-        
-        ax7.set_xticks(angles[:-1])
-        ax7.set_xticklabels(categories, fontsize=10)
-        ax7.set_ylim(0, 1)
-        ax7.set_title('Overall Performance Profile', fontsize=14, fontweight='bold', pad=20)
-        ax7.grid(True)
-        
-        
+
         ax8 = fig.add_subplot(gs[2, :2])
         ax8.axis('off')
         
@@ -841,13 +823,10 @@ class ComparativeVideoEvaluator:
     • Boundary Artifacts: {'Minimal' if boundary_artifacts < 1.2 else 'Moderate' if boundary_artifacts < 1.5 else 'Significant'} ({boundary_artifacts:.2f})
     • Frame Similarity: {quality_retention:.1%} retention (target: >70%)
     
-    💡 RECOMMENDATION
-    {'Production Ready - Excellent quality preservation' if fvd_score < 50 and quality_retention > 0.7 else 
-     'Near Production - Minor refinements needed' if fvd_score < 100 else 
-     'Further optimization recommended'}
+    
     """
         
-        ax8.text(0.05, 0.95, summary_text, transform=ax8.transAxes,
+        ax8.text(0.5, 0.95, summary_text, transform=ax8.transAxes,
                 fontsize=11, verticalalignment='top',
                 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
                 fontfamily='monospace')
@@ -860,35 +839,6 @@ class ComparativeVideoEvaluator:
         grade_score = (fvd_norm * 0.4 + quality_retention * 0.2 + 
                       temporal_fp * 0.2 + length_norm * 0.1 + artifacts_norm * 0.1)
         
-        if grade_score > 0.85:
-            grade = 'A+'
-            grade_color = '#2ecc71'
-            grade_text = 'Exceptional'
-        elif grade_score > 0.75:
-            grade = 'A'
-            grade_color = '#27ae60'
-            grade_text = 'Excellent'
-        elif grade_score > 0.65:
-            grade = 'B'
-            grade_color = '#3498db'
-            grade_text = 'Good'
-        elif grade_score > 0.55:
-            grade = 'C'
-            grade_color = '#f39c12'
-            grade_text = 'Acceptable'
-        else:
-            grade = 'D'
-            grade_color = '#e74c3c'
-            grade_text = 'Needs Improvement'
-        
-        
-        circle = plt.Circle((0.3, 0.5), 0.25, color=grade_color, alpha=0.3, transform=ax9.transAxes)
-        ax9.add_patch(circle)
-        ax9.text(0.3, 0.5, grade, transform=ax9.transAxes,
-                fontsize=48, fontweight='bold', ha='center', va='center', color=grade_color)
-        ax9.text(0.3, 0.2, f'Overall Grade\n{grade_text}', transform=ax9.transAxes,
-                fontsize=14, ha='center', va='center', fontweight='bold')
-        
         
         breakdown_text = f"""
     Scoring Breakdown:
@@ -896,13 +846,11 @@ class ComparativeVideoEvaluator:
     FVD Performance:    {fvd_norm:.0%}
     Quality Retention:  {quality_retention:.0%}
     Temporal Quality:   {temporal_fp:.0%}
-    Length Capability:  {length_norm:.0%}
     Artifact Control:   {artifacts_norm:.0%}
-    ─────────────────
-    Weighted Score:     {grade_score:.0%}
+   
     """
         
-        ax9.text(0.65, 0.5, breakdown_text, transform=ax9.transAxes,
+        ax9.text(0.65, 0, breakdown_text, transform=ax9.transAxes,
                 fontsize=10, va='center', fontfamily='monospace',
                 bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.3))
         
