@@ -24,6 +24,7 @@ from wan.text2video import (WanT2V, T5EncoderModel, WanVAE, shard_model, FlowDPM
                                get_sampling_sigmas, retrieve_timesteps, FlowUniPCMultistepScheduler)
 from .modules.model import VaceWanModel
 from ..utils.preprocessor import VaceVideoProcessor
+from ..utils.framepack_compressor import FramePackCompressor
 
 
 class FramepackVace(WanT2V):
@@ -309,7 +310,10 @@ class FramepackVace(WanT2V):
         3. Better mask generation for consistent 22-frame structure
         4. Enhanced debugging and visualization
         """
-
+        compressor = FramePackCompressor(
+        lambda_compression=2.0,
+        max_history_frames=150  
+    )
         LATENT_WINDOW = 41  
         GENERATION_FRAMES = 30
         CONTEXT_FRAMES = 11
@@ -395,8 +399,8 @@ class FramepackVace(WanT2V):
                 print(f"Section {section_id} - building hierarchical context")
 
 
-                context_latent = self.build_hierarchical_context_latent(
-                    accumulated_latents, section_id)
+                # context_latent = self.build_hierarchical_context_latent(
+                #     accumulated_latents, section_id)
                 
 
                 # context_decoded = self.decode_latent([context_latent], None)
@@ -411,7 +415,11 @@ class FramepackVace(WanT2V):
                     context_decoded = [appearance + motion_perturbed * 0.5]
 
 
-                hierarchical_frames = self.pick_context_v2(context_latent, section_id)
+                # hierarchical_frames = self.pick_context_v2(context_latent, section_id)
+                hierarchical_frames=compressor.select_context_frames(
+                accumulated_latents, 
+                num_context_frames=11
+            )
                 current_frames = self.decode_latent([hierarchical_frames], None)
                 print('current frames shape', current_frames[0].shape )
                 current_masks = self.create_temporal_blend_mask_v2(
@@ -525,23 +533,28 @@ class FramepackVace(WanT2V):
 
                 if section_num==1:
                     latent_without_ref = latents[0]
-                    accumulated_latents.append(latent_without_ref)
-
+                    # accumulated_latents.append(latent_without_ref)
+                    accumulated_latents = compressor.add_new_section([], latent_without_ref)
 
                     all_generated_latents.append(latent_without_ref)
                     
                 else: 
                     latent_without_ref = latents[0][:, 1:-10, :, :]
-                    accumulated_latents.append(latent_without_ref)
+                    # accumulated_latents.append(latent_without_ref)
+                    accumulated_latents = compressor.add_new_section([], latent_without_ref)
 
 
                     all_generated_latents.append(latent_without_ref)
                
             else:
-                if section_id > 2:
-                    accumulated_latents.pop(0)
+                # if section_id > 2:
+                #     accumulated_latents.pop(0)
                 new=latents[0][:, -GENERATION_FRAMES:, :, :]
-                accumulated_latents.append(new)
+                accumulated_latents=compressor.add_new_section(accumulated_latents, new)
+                
+                # accumulated_latents.append(latents[0].clone())
+                stats = compressor.get_compression_stats(accumulated_latents)
+                # accumulated_latents.append(new)
 
                 if section_id == 0:
                     # First section without reference images

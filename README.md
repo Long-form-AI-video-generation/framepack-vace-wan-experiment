@@ -70,7 +70,7 @@ VACE
 the model inference process can be performed as follows:
 ```bash
 # For Wan2.1 single GPU inference (1.3B-480P)
-python vace/framepack_vace_wan_inference.py --ckpt_dir <path-to-model>--src_ref_images <paths-to-src-ref-images> --prompt "xxx"
+python vace/framepack_vace_wan_inference.py --ckpt_dir <path-to-model>--src_ref_images <paths-to-src-ref-images> --prompt "xxx" --frame_num <frame number>
 
 ```
 The output video together with intermediate video, mask and images will be saved into `./results/` by default.
