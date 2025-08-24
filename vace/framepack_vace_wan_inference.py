@@ -283,7 +283,7 @@ def main(args):
         src_video, src_mask, src_ref_images = framepack_vace.prepare_source([args.src_video],
                                                                     [args.src_mask],
                                                                     [None if args.src_ref_images is None else args.src_ref_images.split(',')],
-                                                                    args.frame_num, SIZE_CONFIGS[args.size], device)
+                                                                    121, SIZE_CONFIGS[args.size], device)
 
         logging.info(f"Generating video...")
         video = framepack_vace.generate_with_framepack(
