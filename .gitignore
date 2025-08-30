@@ -22,4 +22,6 @@ vace.egg-info
 results/
 *.mp4
 *.png
+!evaluation_results/**/*.png
+
 
