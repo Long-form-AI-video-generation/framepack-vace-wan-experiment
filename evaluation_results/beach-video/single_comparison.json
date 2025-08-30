@@ -1,0 +1,29 @@
+{
+  "fvd_score": 41.44915151407075,
+  "quality_retention": 0.35728942970161426,
+  "lpips_difference": 0.39794694597289065,
+  "ssim_difference": 0.6556913256645203,
+  "temporal_consistency": {
+    "original": 0.6680992965077059,
+    "framepack": 0.6046819157094282,
+    "improvement": -0.0949219467941761
+  },
+  "motion_smoothness": {
+    "original": 0.005001574439707812,
+    "framepack": 0.005168929571914894
+  },
+  "efficiency": {
+    "time_original": 0.0,
+    "time_framepack": 0.0,
+    "speedup": 0.0
+  },
+  "length_capability": {
+    "max_frames_original": 149,
+    "max_frames_framepack": 157,
+    "improvement_factor": 1.0536912751677852
+  },
+  "framepack_specific": {
+    "boundary_artifacts": 1.1610954146304442,
+    "section_variance": 0.0016150710648175268
+  }
+}
