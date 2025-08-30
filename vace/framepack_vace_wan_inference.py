@@ -83,6 +83,13 @@ def get_parser():
         help="How many frames to sample from a image or video. The number should be 4n+1"
     )
     parser.add_argument(
+        "--seconds",
+        type=int,
+       
+        help="How many seconds to generate"
+    )
+    
+    parser.add_argument(
         "--ckpt_dir",
         type=str,
         default='models/Wan2.1-VACE-1.3B/',
@@ -265,9 +272,22 @@ def main(args):
             dist.broadcast_object_list(input_prompt, src=0)
         args.prompt = input_prompt[0]
         logging.info(f"Extended prompt: {args.prompt}")
+        
+    if getattr(args, "seconds", None) is not None :
+        cal_frames = args.seconds * cfg.sample_fps
+    else:
+        cal_frames = None
+        
+    if cal_frames is not None:
+        frame_number = cal_frames
+    else:
+        frame_number = args.frame_num
+   
+
 
     logging.info("Creating WanT2V pipeline.")
-    if args.frame_num > 121:
+    
+    if frame_number > 121:
         print(' framepack for long frames')
         framepack_vace = FramepackVace(
             config=cfg,
@@ -292,7 +312,7 @@ def main(args):
             src_mask,
             src_ref_images,
             size=SIZE_CONFIGS[args.size],
-            frame_num=args.frame_num,
+            frame_num=frame_number,
             shift=args.sample_shift,
             sample_solver=args.sample_solver,
             sampling_steps=args.sample_steps,
@@ -315,7 +335,7 @@ def main(args):
         src_video, src_mask, src_ref_images = wan_vace.prepare_source([args.src_video],
                                                                     [args.src_mask],
                                                                     [None if args.src_ref_images is None else args.src_ref_images.split(',')],
-                                                                    args.frame_num, SIZE_CONFIGS[args.size], device)
+                                                                    frame_number, SIZE_CONFIGS[args.size], device)
 
         logging.info(f"Generating video...")
         video = wan_vace.generate(
@@ -324,7 +344,7 @@ def main(args):
             src_mask,
             src_ref_images,
             size=SIZE_CONFIGS[args.size],
-            frame_num=args.frame_num,
+            frame_num=frame_number,
             shift=args.sample_shift,
             sample_solver=args.sample_solver,
             sampling_steps=args.sample_steps,

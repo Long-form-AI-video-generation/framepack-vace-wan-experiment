@@ -292,7 +292,7 @@ class FramepackVace(WanT2V):
                  
                  size=(1280, 720),
                  frame_num=41,
-                 context_scale=1.0,
+                 context_scale=1.2,
                  shift=5.0,
                  sample_solver='dpm++',
                  sampling_steps=20,
@@ -309,6 +309,7 @@ class FramepackVace(WanT2V):
         3. Better mask generation for consistent 22-frame structure
         4. Enhanced debugging and visualization
         """
+        total_output_frames=0
 
         LATENT_WINDOW = 41  
         GENERATION_FRAMES = 30
@@ -424,8 +425,7 @@ class FramepackVace(WanT2V):
 
                 context_variation = 0.7 + torch.rand(1).item() * 0.6
                 context_scale_section = context_scale * context_variation
-                
-
+             
             z0 = self.vace_encode_frames(current_frames, current_ref_images, masks=current_masks)
             m0 = self.vace_encode_masks(current_masks, current_ref_images)
             z = self.vace_latent(z0, m0)
@@ -462,7 +462,9 @@ class FramepackVace(WanT2V):
             @contextmanager
             def noop_no_sync():
                 yield
-            sample_solver ='dpm++'
+            sample_solver ='unipc'
+            sampling_steps=50
+            print(sample_solver, sampling_steps)
             no_sync = getattr(self.model, 'no_sync', noop_no_sync)
             # sample_solver='dpm++'
             # sampling_steps=20
@@ -478,6 +480,14 @@ class FramepackVace(WanT2V):
                         sample_scheduler,
                         device=self.device,
                         sigmas=sampling_sigmas)
+                elif sample_solver == 'unipc':
+                    sample_scheduler = FlowUniPCMultistepScheduler(
+                        num_train_timesteps=self.num_train_timesteps,
+                        shift=1,
+                        use_dynamic_shifting=False)
+                    sample_scheduler.set_timesteps(
+                        sampling_steps, device=self.device, shift=shift)
+                    timesteps = sample_scheduler.timesteps
                 else:
                     raise NotImplementedError(f"Unsupported solver: {sample_solver}")
 
@@ -519,6 +529,7 @@ class FramepackVace(WanT2V):
                             f"std={latents[0].std().item():.3f}")
                     del noise_pred, noise_pred_uncond,noise_pred_cond
                     
+                    
             del context, context_null,z, noise
             if section_id == 0:
                 print(f"Section 0: Removing {1} reference frames from latent")
@@ -551,6 +562,10 @@ class FramepackVace(WanT2V):
                     new_content = latents[0][:, -GENERATION_FRAMES:, :, :]
                     new_content = new_content[:, 11:, :, :]
                     all_generated_latents.append(new_content)
+                    frames_added = new_content.shape[1]
+                    total_output_frames += frames_added
+                    print(f"🎬 Section {section_id} OUTPUT: Added {frames_added} frames to final video (took last {GENERATION_FRAMES}, removed first {CONTEXT_FRAMES})")
+                    print(f"📊 Total output frames so far: {total_output_frames}")
                     del new_content
             torch.cuda.synchronize()    
             torch.cuda.empty_cache()
@@ -564,6 +579,9 @@ class FramepackVace(WanT2V):
         
         # Final video assembly
         if self.rank == 0 and all_generated_latents:
+            if hasattr(self, 'model') and self.model is not None:
+                self.model = self.model.cpu()
+                print("  ✓ Moved DiT model to CPU")
 
             final_latent = torch.cat(all_generated_latents, dim=1)
             print(f"\nFinal latent shape: {final_latent.shape}")

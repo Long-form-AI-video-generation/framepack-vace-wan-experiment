@@ -266,7 +266,7 @@ class WanVace(WanT2V):
                  input_ref_images,
                  size=(1280, 720),
                  frame_num=81,
-                 context_scale=1.0,
+                 context_scale=1.2,
                  shift=5.0,
                  sample_solver='unipc',
                  sampling_steps=50,
