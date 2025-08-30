@@ -74,3 +74,14 @@ python vace/framepack_vace_wan_inference.py --ckpt_dir <path-to-model>--src_ref_
 
 ```
 The output video together with intermediate video, mask and images will be saved into `./results/` by default.
+#### Video evaluation
+```bash
+python tests/video_evaluation.py \
+  --original path/to/original1.mp4  \
+  --framepack path/to/framepack1.mp4 \
+  --device cuda (optional) \
+  --save_dir evaluation_results (optional) \
+  --boundaries 10 20 30 (optional) \
+  --time_original 120.5 (optional) \
+  --time_framepack 110.3 (optional)
+```
